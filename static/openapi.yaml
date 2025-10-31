@@ -1,0 +1,332 @@
+openapi: 3.0.0
+info:
+  title: Firemní evidence faktur API
+  version: 1.0.0
+  description: >
+    REST API pro správu vydaných a přijatých faktur.  
+    Umožňuje vystavení, evidenci, přehledy a statistiky faktur podle uživatelských rolí (majitel, účetní).
+
+servers:
+  - url: http://localhost:8080
+    description: Lokální vývoj
+  - url: https://api.fakturace.example.cz
+    description: Produkce
+
+tags:
+  - name: Auth
+    description: Autentizace uživatelů
+  - name: Invoices
+    description: Evidence vydaných a přijatých faktur
+  - name: Reports
+    description: Přehledy a statistiky
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  schemas:
+    Error:
+      type: object
+      required: [code, message]
+      properties:
+        code:
+          type: string
+          example: VALIDATION_ERROR
+        message:
+          type: string
+          example: "Missing required field 'number'"
+
+    User:
+      type: object
+      required: [id, username, role]
+      properties:
+        id:
+          type: string
+          format: uuid
+        username:
+          type: string
+          example: "ucetni"
+        role:
+          type: string
+          enum: [owner, accountant]
+          example: "owner"
+
+    Invoice:
+      type: object
+      required:
+        [id, number, issueDate, dueDate, supplier, customer, total, vat, paid]
+      properties:
+        id:
+          type: string
+          format: uuid
+        number:
+          type: string
+          example: "2025-0012"
+        issueDate:
+          type: string
+          format: date
+          example: "2025-01-15"
+        taxableDate:
+          type: string
+          format: date
+          example: "2025-01-15"
+        dueDate:
+          type: string
+          format: date
+          example: "2025-01-30"
+        supplier:
+          type: string
+          example: "ABC s.r.o."
+        customer:
+          type: string
+          example: "XYZ spol. s r.o."
+        description:
+          type: string
+          example: "Dodávka kancelářských potřeb"
+        total:
+          type: number
+          format: float
+          example: 15000.00
+        vat:
+          type: number
+          format: float
+          example: 3150.00
+        paid:
+          type: boolean
+          example: false
+        paymentDate:
+          type: string
+          format: date
+          nullable: true
+        variableSymbol:
+          type: string
+          example: "20250012"
+        bankAccount:
+          type: string
+          example: "123456789/0100"
+
+    InvoiceCreate:
+      type: object
+      required: [number, issueDate, dueDate, supplier, customer, total, vat]
+      properties:
+        number:
+          type: string
+        issueDate:
+          type: string
+          format: date
+        dueDate:
+          type: string
+          format: date
+        supplier:
+          type: string
+        customer:
+          type: string
+        description:
+          type: string
+        total:
+          type: number
+          format: float
+        vat:
+          type: number
+          format: float
+
+paths:
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Přihlášení uživatele
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [username, password]
+              properties:
+                username:
+                  type: string
+                password:
+                  type: string
+      responses:
+        '200':
+          description: Přihlášení úspěšné
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  token:
+                    type: string
+                    example: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
+        '401':
+          description: Neplatné přihlašovací údaje
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /invoices:
+    get:
+      tags: [Invoices]
+      summary: Seznam faktur
+      parameters:
+        - in: query
+          name: paid
+          schema: { type: boolean }
+          description: Filtr podle stavu úhrady
+        - in: query
+          name: customer
+          schema: { type: string }
+          description: Filtr podle odběratele
+        - in: query
+          name: month
+          schema: { type: string, pattern: '^[0-9]{4}-[0-9]{2}$' }
+          description: Filtr podle měsíce (YYYY-MM)
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, total]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/Invoice' }
+                  total:
+                    type: integer
+        '500':
+          description: Internal server error
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+    post:
+      tags: [Invoices]
+      summary: Vystavení nové faktury
+      security: [ { bearerAuth: [] } ]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InvoiceCreate' }
+      responses:
+        '201':
+          description: Faktura vytvořena
+          headers:
+            Location:
+              description: URL nové faktury
+              schema: { type: string }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Invoice' }
+        '400':
+          description: Chyba validace
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+        '401':
+          description: Neautorizováno
+        '409':
+          description: Duplicitní číslo faktury
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /invoices/{id}:
+    parameters:
+      - in: path
+        name: id
+        required: true
+        schema: { type: string, format: uuid }
+        description: ID faktury
+    get:
+      tags: [Invoices]
+      summary: Detail faktury
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Invoice' }
+        '404':
+          description: Faktura nenalezena
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+    delete:
+      tags: [Invoices]
+      summary: Smazat fakturu
+      security: [ { bearerAuth: [] } ]
+      responses:
+        '204': { description: Faktura smazána }
+        '404':
+          description: Faktura nenalezena
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/Error' }
+
+  /reports/unpaid:
+    get:
+      tags: [Reports]
+      summary: Přehled nezaplacených faktur
+      security: [ { bearerAuth: [] } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/Invoice' }
+
+  /reports/debtors:
+    get:
+      tags: [Reports]
+      summary: Top dlužníci podle objemu a délky prodlení
+      security: [ { bearerAuth: [] } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    customer:
+                      type: string
+                    totalDebt:
+                      type: number
+                    overdueDays:
+                      type: integer
+
+  /reports/statistics:
+    get:
+      tags: [Reports]
+      summary: Statistické přehledy (měsíční součty, průměrná doba úhrady)
+      security: [ { bearerAuth: [] } ]
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  averagePaymentTime:
+                    type: number
+                    description: Průměrná doba úhrady (dny)
+                    example: 12
+                  monthlyTotals:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        month: { type: string, example: "2025-01" }
+                        totalAmount: { type: number, example: 185000.00 }
+                        paidAmount: { type: number, example: 170000.00 }
